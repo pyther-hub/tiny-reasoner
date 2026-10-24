@@ -10,6 +10,7 @@ model.py      # architecture: load_tokenizer, load_model (HF + LoRA), tiny_model
 data.py       # dataset/dataloader: load_gsm8k, collate_fn, make_loader, tiny_dataset (tests)
 train.py      # training loop: forward_loss, train_one_epoch, eval_val_loss, check_grads, GPU mem utils
 evaluation.py # evaluation: generate_seq, extract_answer, evaluate_gsm8k, show_samples
+ddp.py        # DDP helpers: launch, setup/cleanup, is_main, reduce_mean, wrap_ddp/unwrap (no-ops without DDP)
 tests/        # smoke + shape/gradient tests (CPU, tiny random model, offline)
 runs/         # outputs: checkpoints, logs, predictions (gitignored)
 notebooks/    # scratch analysis only — never import from here
@@ -34,6 +35,13 @@ Every loop function takes `debug=False`. With `debug=True`:
 - `eval_val_loss`: 3 batches. `evaluate_gsm8k`: one batch, 8 new tokens.
 - `forward_loss` raises `FloatingPointError` on non-finite loss (always, not only in debug).
 New loops must follow the same `debug` convention.
+
+## DDP
+- `train.ddp_main(rank, world_size, cfg)` is the multi-GPU entry point, launched via `ddp.launch`. Spawned
+  functions must live in a .py file, never a notebook. Rank 0 saves to `cfg["out_dir"]`.
+- Loop code must stay DDP-agnostic: print/tqdm only when `is_main()`, average logged metrics with `reduce_mean`,
+  use `unwrap(model)` before saving/generating. Every rank must hit the same collectives (no rank-dependent early exits).
+- `tests/test_ddp.py` runs 2 CPU processes with gloo — keep it passing.
 
 ## Rules for new code
 - **Any new module / model change needs a test in `tests/`**: output-shape check, gradient check

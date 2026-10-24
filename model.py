@@ -1,6 +1,8 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, Qwen2Config
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+
+from ddp import is_main
 
 
 def get_device():
@@ -38,10 +40,17 @@ def load_model(model_name, device, dtype=torch.float32, lora=True, grad_ckpt=Fal
         model = add_lora(model, **lora_kwargs)
     if grad_ckpt:
         model.config.use_cache = False
-        model.gradient_checkpointing_enable()
+        # non-reentrant: required for DDP, and no enable_input_require_grads() hack needed with LoRA
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.to(device)
     print_trainable_parameters(model)
     return model
+
+
+def load_adapter(model_name, adapter_dir, device, dtype=torch.float32):
+    """Base model + LoRA adapter saved by save_pretrained (e.g. by train.ddp_main)."""
+    model = AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype, attn_implementation="sdpa")
+    return PeftModel.from_pretrained(model, adapter_dir).to(device)
 
 
 def tiny_model(vocab_size, lora=True):
@@ -62,6 +71,8 @@ def tiny_model(vocab_size, lora=True):
 
 
 def print_trainable_parameters(model):
+    if not is_main():
+        return
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
     print(f"trainable: {trainable:,} / {total:,} ({100 * trainable / total:.3f}%)")

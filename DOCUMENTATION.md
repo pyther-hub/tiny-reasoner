@@ -92,7 +92,8 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 | `load_model(model_name, device, dtype=float32, lora=True, grad_ckpt=False, **lora_kwargs)` | Loads `AutoModelForCausalLM` (sdpa attention), optionally wraps with LoRA and enables gradient checkpointing, moves to device, prints trainable params. |
 | `add_lora(model, r=8, lora_alpha=16, lora_dropout=0.05, target_modules=("q_proj","v_proj"))` | Wraps a model with a peft LoRA adapter. |
 | `tiny_model(vocab_size, lora=True)` | 2-layer, hidden-64 random Qwen2 model for tests. No download. |
-| `print_trainable_parameters(model)` | Trainable / total param counts. |
+| `load_adapter(model_name, adapter_dir, device)` | Base model + saved LoRA adapter (e.g. the output of a DDP run). |
+| `print_trainable_parameters(model)` | Trainable / total param counts (rank 0 only under DDP). |
 
 ### `data.py`
 | Function | What it does |
@@ -100,7 +101,7 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 | `load_gsm8k(val_size=256, seed=42)` | Returns `(train, val, test)` HF datasets; val is split from train. |
 | `format_prompt(question)` | `"Question: {q}\nAnswer:"` — used by both training and generation. |
 | `collate_fn(batch, tokenizer, max_length, max_input_length)` | Tokenizes prompt + answer + EOS, right-pads. Prompt and padding labels are `-100`. Returns `input_ids`, `attention_mask`, `labels` (all `[B, T]` long). |
-| `make_loader(dataset, tokenizer, batch_size, max_length=384, max_input_length=128, shuffle=True)` | DataLoader using `collate_fn`. |
+| `make_loader(dataset, tokenizer, batch_size, max_length=384, max_input_length=128, shuffle=True, distributed=False, num_workers=0)` | DataLoader using `collate_fn`. `distributed=True` adds a `DistributedSampler` (call `loader.sampler.set_epoch(epoch)` each epoch). |
 | `tiny_dataset(n=8)` | Fake GSM8K-format rows for tests. |
 
 ### `train.py`
@@ -110,8 +111,20 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 | `train_one_epoch(model, loader, optimizer, device, accum_steps=4, debug=False)` | One epoch with gradient accumulation. Returns list of per-batch losses. `debug`: 3 steps, no accumulation, shape print + grad check. |
 | `eval_val_loss(model, loader, device, debug=False)` | Mean val loss (no grad). |
 | `check_grads(model)` | Raises if any trainable param has no grad or a non-finite grad. |
+| `ddp_main(rank, world_size, cfg)` | Full DDP training run for one worker (see §5). Defaults in `DDP_DEFAULTS`. |
 | `calc_loss(logits, labels)` | Flat cross-entropy, `ignore_index=-100`. |
 | `gpu_memory_report()` / `clean_unused_gpu_memory()` | GPU memory stats / gc + empty cache. |
+
+### `ddp.py`
+All helpers are no-ops when no process group is running, so the same train code works with and without DDP.
+
+| Function | What it does |
+|---|---|
+| `launch(fn, *args, nprocs=None)` | `mp.spawn` of `fn(rank, world_size, *args)`, one process per GPU by default. Picks a free port. |
+| `setup(rank, world_size, timeout_s=1800)` / `cleanup()` | Join / leave the process group (nccl on GPU, gloo on CPU). Returns the rank's device. |
+| `is_main()`, `get_rank()`, `get_world_size()`, `barrier()` | The usual. |
+| `reduce_mean(value, device)` | Average a float across ranks (for logging). |
+| `wrap_ddp(model, device)` / `unwrap(model)` | Wrap in `DistributedDataParallel` / get the inner model back. |
 
 ### `evaluation.py`
 | Function | What it does |
@@ -123,7 +136,33 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 
 ---
 
-## 5. Tests (`tests/test_smoke.py`)
+## 5. Multi-GPU (DDP) on Kaggle
+
+Kaggle's "GPU T4 x2" gives 2 GPUs. DDP runs one process per GPU, which shapes how you use it from a notebook:
+- The **whole run is one function** (`train.ddp_main`) — you can't load in one cell and train in the next.
+- It must live in the repo (a function defined in a notebook cell can't be spawned).
+- The trained model **does not come back** to the notebook: rank 0 saves the adapter to `out_dir`, you reload it.
+
+```python
+from ddp import launch
+from train import ddp_main
+
+cfg = dict(model_name=MODEL_NAME, out_dir="/kaggle/working/runs/ddp1",
+           batch_size=6, accum_steps=2, lr=3e-5, epochs=3, debug=True)
+launch(ddp_main, cfg)          # always run with debug=True first, then debug=False
+
+# evaluate in the notebook process, on one GPU
+from model import load_adapter
+llm = load_adapter(MODEL_NAME, cfg["out_dir"], device)
+acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device)
+```
+- **Effective batch** = `batch_size × num_GPUs × accum_steps`. Going from 1 to 2 GPUs doubles it — halve `accum_steps` or retune `lr`.
+- Free the GPUs before launching (don't hold a model on GPU in the notebook) or the workers will OOM.
+- No need to pre-download: rank 0 downloads first, the other ranks wait at a barrier and read the cache.
+- With `debug=True` the process-group timeout is 120s, so a crash on one rank fails fast instead of hanging.
+- Evaluation/generation is single-process (no benefit from DDP for greedy decoding).
+
+## 6. Tests (`tests/`)
 
 | Test | Catches |
 |---|---|
@@ -133,10 +172,12 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 | `test_overfit_one_batch` | Model + loss can actually learn (loss drops >70% on one batch). |
 | `test_debug_pipeline` | Full train → val → eval path runs end-to-end in debug mode. |
 | `test_extract_answer` | Answer parsing edge cases. |
+| `test_ddp.py::test_ddp_grads_in_sync` | 2 CPU processes (gloo): ranks get disjoint data, weights identical after training (incl. `no_sync` accumulation). |
+| `test_ddp.py::test_ddp_main_tiny` | `ddp_main` runs end-to-end and saves the adapter. |
 
 Adding a new module? Add a shape test, a gradient test and an overfit-one-batch test for it.
 
-## 6. Workflow
+## 7. Workflow
 1. Edit code locally (or have Claude Code edit it) → `python -m pytest -q` → commit → `git push`.
 2. On Kaggle: re-run the setup cell (`git pull`), run with `DEBUG = True`, then `DEBUG = False`.
 3. Prototype new ideas inside the notebook freely; once a function is stable, move it into the repo with a test.

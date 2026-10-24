@@ -1,5 +1,7 @@
+from functools import partial
+
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 from datasets import load_dataset, Dataset
 
 
@@ -53,13 +55,19 @@ def collate_fn(batch, tokenizer, max_length, max_input_length):
     }
 
 
-def make_loader(dataset, tokenizer, batch_size, max_length=384, max_input_length=128, shuffle=True):
+def make_loader(dataset, tokenizer, batch_size, max_length=384, max_input_length=128, shuffle=True,
+                distributed=False, num_workers=0):
+    """distributed=True: each rank gets its own shard. Call loader.sampler.set_epoch(epoch) every epoch."""
+    sampler = DistributedSampler(dataset, shuffle=shuffle) if distributed else None
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
-        collate_fn=lambda batch: collate_fn(
-            batch=batch,
+        shuffle=shuffle and sampler is None,
+        sampler=sampler,
+        num_workers=num_workers,
+        # partial, not lambda: must be picklable for num_workers > 0 and spawned processes
+        collate_fn=partial(
+            collate_fn,
             tokenizer=tokenizer,
             max_length=max_length,
             max_input_length=max_input_length,
