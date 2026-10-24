@@ -92,7 +92,7 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 | `load_tokenizer(model_name)` | HF tokenizer; sets `pad_token = eos_token` if missing. |
 | `load_model(model_name, device, dtype=float32, lora=True, grad_ckpt=False, **lora_kwargs)` | Loads `AutoModelForCausalLM` (sdpa attention), optionally wraps with LoRA and enables gradient checkpointing, moves to device, prints trainable params. |
 | `add_lora(model, r=8, lora_alpha=16, lora_dropout=0.05, target_modules=("q_proj","v_proj"))` | Wraps a model with a peft LoRA adapter. |
-| `tiny_model(vocab_size, lora=True)` | ~2-layer random Qwen2 model for tests. No download. |
+| `tiny_model(vocab_size, lora=True)` | 2-layer, hidden-64 random Qwen2 model for tests. No download. |
 | `print_trainable_parameters(model)` | Trainable / total param counts. |
 
 ### `data.py`

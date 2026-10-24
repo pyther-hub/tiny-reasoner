@@ -45,7 +45,7 @@ def load_model(model_name, device, dtype=torch.float32, lora=True, grad_ckpt=Fal
 
 
 def tiny_model(vocab_size, lora=True):
-    """Randomly initialised Qwen2-architecture model (~1M params). For smoke tests only, no download."""
+    """Randomly initialised 2-layer Qwen2-architecture model (hidden 64). For smoke tests only, no download."""
     config = Qwen2Config(
         vocab_size=vocab_size,
         hidden_size=64,
