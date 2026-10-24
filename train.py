@@ -22,7 +22,7 @@ def print_shapes(**tensors):
 
 def forward_loss(model, batch, device, debug=False):
     """Shifted next-token loss. Returns (loss, logits)."""
-    x_in = batch["input_ids"].to(device)
+    x_in = batch["input_ids"].to(device) 
     y_label = batch["labels"].to(device)
     attention_mask = batch["attention_mask"].to(device)
 
@@ -43,7 +43,7 @@ def forward_loss(model, batch, device, debug=False):
 def train_one_epoch(model, train_loader, optimizer, device, accum_steps=4, debug=False):
     """debug=True: run DEBUG_STEPS batches, print tensor shapes on the first, check grads."""
     model.train()
-    optimizer.zero_grad(set_to_none=True)
+    optimizer.zero_grad(set_to_none=True) #set gradients to None instead of zeroing them out, which can be more efficient
     num_batches = min(len(train_loader), DEBUG_STEPS) if debug else len(train_loader)
     if debug:
         accum_steps = 1

@@ -1,4 +1,4 @@
-# once-llm — Documentation
+# tiny-reasoner — Documentation
 
 Helper code for LLM fine-tuning experiments. You run experiments in notebooks (Kaggle GPU or local);
 the notebook imports functions from this repo.
@@ -12,9 +12,9 @@ Notebook settings: **Internet ON**, accelerator GPU.
 ```python
 # cell 1 — setup (re-run to pull latest code)
 import os, sys
-REPO = "/kaggle/working/once-llm"
+REPO = "/kaggle/working/tiny-reasoner"
 if not os.path.exists(REPO):
-    !git clone https://github.com/<you>/once-llm.git {REPO}
+    !git clone https://github.com/pyther-hub/tiny-reasoner.git {REPO}
 else:
     !git -C {REPO} pull
 sys.path.insert(0, REPO)
@@ -28,7 +28,7 @@ sys.path.insert(0, REPO)
 ```python
 from kaggle_secrets import UserSecretsClient
 token = UserSecretsClient().get_secret("GH_TOKEN")
-!git clone https://{token}@github.com/<you>/once-llm.git {REPO}
+!git clone https://{token}@github.com/pyther-hub/tiny-reasoner.git {REPO}
 ```
 
 Save outputs to `/kaggle/working/runs/<run_name>/` — that directory is kept in the notebook's output.
@@ -51,7 +51,7 @@ from torch.optim import AdamW
 from model import get_device, load_tokenizer, load_model
 from data import load_gsm8k, make_loader
 from train import train_one_epoch, eval_val_loss, clean_unused_gpu_memory
-from eval import evaluate_gsm8k, show_samples
+from evaluation import evaluate_gsm8k, show_samples
 
 DEBUG = True          # True: 3 steps, shape printing, grad check. Flip to False for the real run.
 MODEL_NAME = "Qwen/Qwen2.5-0.5B"
@@ -79,7 +79,6 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 > before you burn GPU quota.
 
 > Name the model variable something other than `model` (e.g. `llm`) to avoid confusion with the `model` module.
-> Never `import eval` — use `from eval import ...` (it would shadow Python's `eval`).
 
 ---
 
@@ -114,7 +113,7 @@ acc, preds = evaluate_gsm8k(llm, tokenizer, test_ds, device, debug=DEBUG)
 | `calc_loss(logits, labels)` | Flat cross-entropy, `ignore_index=-100`. |
 | `gpu_memory_report()` / `clean_unused_gpu_memory()` | GPU memory stats / gc + empty cache. |
 
-### `eval.py`
+### `evaluation.py`
 | Function | What it does |
 |---|---|
 | `generate_seq(model, tokenizer, questions, device, max_seq_len=512)` | Greedy batched decoding (left-padded, no KV cache). Returns generated text only. |

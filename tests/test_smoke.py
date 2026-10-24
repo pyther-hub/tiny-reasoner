@@ -8,7 +8,7 @@ from torch.optim import AdamW
 from data import tiny_dataset, collate_fn, make_loader
 from model import tiny_model, load_tokenizer
 from train import forward_loss, train_one_epoch, eval_val_loss, check_grads
-from eval import extract_answer, evaluate_gsm8k
+from evaluation import extract_answer, evaluate_gsm8k
 
 DEVICE = torch.device("cpu")
 TOKENIZER_NAME = "openai-community/gpt2"  # small and cached; real runs use Qwen
